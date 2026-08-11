@@ -1,0 +1,273 @@
+<!DOCTYPE html>
+<html lang="pt-PT">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Projeto Douro — Terrenos e Ruínas</title>
+<style>
+  :root { color-scheme: light; }
+  * { box-sizing: border-box; }
+  body { font-family: -apple-system, "Segoe UI", Roboto, sans-serif; color: #1a1a1a; background: #fafaf8; margin: 0; padding: 24px 16px 60px; }
+  #app { max-width: 1100px; margin: 0 auto; }
+  h1 { font-size: 20px; font-weight: 600; margin: 0 0 4px; }
+  .sub { font-size: 13px; color: #777; margin-bottom: 20px; }
+  table { width: 100%; border-collapse: collapse; font-size: 13px; background:#fff; }
+  th, td { padding: 8px 6px; }
+  a { color: #0b5fb0; }
+  @media (max-width: 640px) {
+    body { padding: 16px 10px 40px; }
+    h1 { font-size: 17px; }
+    #table-wrap { overflow-x: auto; }
+  }
+</style>
+</head>
+<body>
+<div id="app">
+  <h1>Projeto Douro — Terrenos e Ruínas</h1>
+  <div class="sub" id="subtitle">A carregar dados…</div>
+  <div id="loading" style="padding: 40px 0; text-align: center; color: #666;">A carregar dados da folha pública…</div>
+  <div id="content" style="display:none;"></div>
+</div>
+
+<script>
+const CSV_URL = "https://docs.google.com/spreadsheets/d/1eyMrZYs1SFPIfv0cPGBJb2gSOz7MFs9URWX0Ul6U55E/export?format=csv&gid=2065672292";
+const SNAPSHOT_KEY = "douro_dashboard_snapshot_v1";
+
+function parseCSV(text) {
+  const rows = [];
+  let row = [], field = "", inQuotes = false;
+  for (let i=0;i<text.length;i++) {
+    const c = text[i], next = text[i+1];
+    if (inQuotes) {
+      if (c === '"' && next === '"') { field += '"'; i++; }
+      else if (c === '"') { inQuotes = false; }
+      else { field += c; }
+    } else {
+      if (c === '"') inQuotes = true;
+      else if (c === ',') { row.push(field); field = ""; }
+      else if (c === '\r') { }
+      else if (c === '\n') { row.push(field); rows.push(row); row = []; field = ""; }
+      else { field += c; }
+    }
+  }
+  if (field.length || row.length) { row.push(field); rows.push(row); }
+  return rows.filter(r => r.length > 1 || r[0] !== "");
+}
+
+function toObjects(rows) {
+  const headers = rows[0];
+  return rows.slice(1).map(r => {
+    const o = {};
+    headers.forEach((h,i) => o[h] = r[i] !== undefined ? r[i] : "");
+    return o;
+  });
+}
+
+function stars(n) {
+  const v = parseFloat(n) || 0;
+  const full = Math.floor(v);
+  const half = v - full >= 0.5;
+  let s = "";
+  for (let i=0;i<full;i++) s += "★";
+  if (half) s += "½";
+  return s + " (" + (v || "n/d") + ")";
+}
+
+function euros(n) {
+  const v = parseFloat(n);
+  if (isNaN(v)) return n || "n/d";
+  return v.toLocaleString("pt-PT") + " €";
+}
+
+function extractGPS(field) {
+  if (!field || field.toLowerCase().indexOf("não confirmado") === 0 || field.toLowerCase().indexOf("nao confirmado") === 0) return null;
+  const m = field.match(/(-?\d{1,2}\.\d{3,})\s*,\s*(-?\d{1,2}\.\d{3,})/);
+  if (!m) return null;
+  return { lat: m[1], lng: m[2] };
+}
+
+function propCard(p) {
+  const gps = extractGPS(p.GPS);
+  const mapUrl = gps ? ("https://www.google.com/maps?q="+gps.lat+","+gps.lng) : ("https://www.google.com/maps/search/"+encodeURIComponent(p.Localidade+", "+p.Concelho+", Portugal"));
+  return '<div style="background:#fff;border:1px solid #e3e3e3;border-radius:10px;padding:14px 16px;margin-bottom:10px;">'
+    +'<div style="display:flex;justify-content:space-between;align-items:flex-start;gap:8px;">'
+    +'<div><div style="font-weight:600;font-size:15px;">'+p.Rank+'. '+p.Localidade+'</div>'
+    +'<div style="font-size:12px;color:#777;">'+p.Concelho+', '+p.Distrito+'</div></div>'
+    +'<div style="text-align:right;"><div style="font-weight:600;">'+euros(p.Preco_EUR)+'</div>'
+    +'<div style="font-size:11px;color:#777;">'+(p.Area_m2 && !isNaN(parseFloat(p.Area_m2)) ? parseFloat(p.Area_m2).toLocaleString("pt-PT")+" m²" : "área n/d")+'</div></div>'
+    +'</div>'
+    +'<div style="margin:8px 0;font-size:13px;color:#b8860b;">'+stars(p.Avaliacao_Global_estrelas)+' avaliação global</div>'
+    +'<div style="font-size:12px;color:#555;line-height:1.5;max-height:54px;overflow:hidden;">'+(p.Tipo_Vista||'')+'</div>'
+    +'<div style="margin-top:10px;display:flex;gap:8px;flex-wrap:wrap;">'
+    +'<a href="'+p.Link+'" target="_blank" style="font-size:12px;text-decoration:none;border:1px solid #cfe0f2;padding:4px 10px;border-radius:6px;">Ver anúncio ↗</a>'
+    +'<a href="'+mapUrl+'" target="_blank" style="font-size:12px;color:'+(gps?'#0b6b3a':'#8a6d00')+';text-decoration:none;border:1px solid '+(gps?'#cdeade':'#f0e3b0')+';padding:4px 10px;border-radius:6px;">'+(gps?'Mapa (GPS confirmado)':'Mapa (pesquisa por nome)')+' ↗</a>'
+    +'</div></div>';
+}
+
+function computeDiffs(current) {
+  let prev = null;
+  try { prev = JSON.parse(localStorage.getItem(SNAPSHOT_KEY) || "null"); } catch(e) {}
+  const diffs = [];
+  if (prev && prev.items) {
+    const prevMap = {};
+    prev.items.forEach(p => prevMap[p.ID] = p);
+    current.forEach(c => {
+      const p = prevMap[c.ID];
+      if (!p) { diffs.push({type:"novo", item:c}); }
+      else {
+        if (p.Preco_EUR !== c.Preco_EUR) diffs.push({type:"preco", item:c, de:p.Preco_EUR, para:c.Preco_EUR});
+        if (p.Avaliacao_Global_estrelas !== c.Avaliacao_Global_estrelas) diffs.push({type:"estrelas", item:c, de:p.Avaliacao_Global_estrelas, para:c.Avaliacao_Global_estrelas});
+      }
+    });
+  }
+  localStorage.setItem(SNAPSHOT_KEY, JSON.stringify({ savedAt: new Date().toISOString(), items: current.map(c=>({ID:c.ID,Preco_EUR:c.Preco_EUR,Avaliacao_Global_estrelas:c.Avaliacao_Global_estrelas})) }));
+  return { diffs, isFirstVisit: !prev };
+}
+
+function statCard(label, value) {
+  return '<div style="background:#f6f6f4;border-radius:10px;padding:10px 16px;min-width:140px;">'
+    +'<div style="font-size:12px;color:#777;">'+label+'</div>'
+    +'<div style="font-size:20px;font-weight:600;">'+value+'</div></div>';
+}
+
+function render(items) {
+  document.getElementById("loading").style.display = "none";
+  document.getElementById("subtitle").textContent = items.length + " propriedades — Norte de Portugal";
+  const content = document.getElementById("content");
+  content.style.display = "block";
+
+  const { diffs, isFirstVisit } = computeDiffs(items);
+  const sorted = [...items].sort((a,b) => (parseFloat(b.Avaliacao_Global_estrelas)||0) - (parseFloat(a.Avaliacao_Global_estrelas)||0) || (parseFloat(b.QualidadePreco_estrelas)||0) - (parseFloat(a.QualidadePreco_estrelas)||0));
+  const top10 = sorted.slice(0,10);
+  const gpsCount = items.filter(p => extractGPS(p.GPS)).length;
+  const lastDate = items.map(p=>p.Data).sort().pop() || "n/d";
+
+  let html2 = "";
+  html2 += '<div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:18px;">'
+    + statCard("Propriedades", items.length)
+    + statCard("GPS confirmado", gpsCount + " / " + items.length)
+    + statCard("Última atualização", lastDate)
+    + '</div>';
+
+  if (diffs.length && !isFirstVisit) {
+    html2 += '<div style="background:#fff8e1;border:1px solid #f0dfa0;border-radius:10px;padding:12px 16px;margin-bottom:18px;">';
+    html2 += '<div style="font-weight:600;font-size:13px;margin-bottom:6px;color:#7a5c00;">Novidades desde a última visita</div>';
+    diffs.forEach(d => {
+      if (d.type==="novo") html2 += '<div style="font-size:12px;color:#555;">• Novo: '+d.item.Localidade+' ('+euros(d.item.Preco_EUR)+')</div>';
+      if (d.type==="preco") html2 += '<div style="font-size:12px;color:#555;">• Preço alterado em '+d.item.Localidade+': '+euros(d.de)+' → '+euros(d.para)+'</div>';
+      if (d.type==="estrelas") html2 += '<div style="font-size:12px;color:#555;">• Avaliação alterada em '+d.item.Localidade+': '+d.de+' → '+d.para+'</div>';
+    });
+    html2 += '</div>';
+  } else if (isFirstVisit) {
+    html2 += '<div style="background:#f2f7ff;border:1px solid #cfe0f2;border-radius:10px;padding:12px 16px;margin-bottom:18px;font-size:12px;color:#555;">Primeira visita neste dispositivo — a partir de agora comparo automaticamente cada vez que reabrir, e assinalo aqui novos anúncios, preços alterados ou avaliações alteradas.</div>';
+  }
+
+  html2 += '<div style="font-weight:600;font-size:16px;margin:20px 0 10px;">Top 10 oportunidades</div>';
+  html2 += '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:10px;">';
+  top10.forEach(p => { html2 += propCard(p); });
+  html2 += '</div>';
+
+  html2 += '<div style="font-weight:600;font-size:16px;margin:26px 0 10px;">Todas as propriedades</div>';
+  html2 += '<div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px;">';
+  html2 += '<select id="f-concelho" style="padding:6px 10px;border-radius:6px;border:1px solid #ccc;font-size:13px;"><option value="">Todos os concelhos</option></select>';
+  html2 += '<input id="f-preco" type="number" placeholder="Preço máx (€)" style="padding:6px 10px;border-radius:6px;border:1px solid #ccc;font-size:13px;width:130px;">';
+  html2 += '<select id="f-estrelas" style="padding:6px 10px;border-radius:6px;border:1px solid #ccc;font-size:13px;"><option value="0">Todas as estrelas</option><option value="3.5">≥ 3.5 ★</option><option value="4">≥ 4 ★</option></select>';
+  html2 += '<label style="font-size:13px;display:flex;align-items:center;gap:4px;"><input id="f-ruina" type="checkbox"> só com ruína</label>';
+  html2 += '</div>';
+  html2 += '<div id="table-wrap"></div>';
+
+  content.innerHTML = html2;
+
+  const concelhos = [...new Set(items.map(p=>p.Concelho))].sort();
+  const sel = document.getElementById("f-concelho");
+  concelhos.forEach(c => { const o = document.createElement("option"); o.value=c; o.textContent=c; sel.appendChild(o); });
+
+  let sortKey = "Rank", sortDir = 1;
+
+  function renderTable() {
+    const concelho = document.getElementById("f-concelho").value;
+    const precoMax = parseFloat(document.getElementById("f-preco").value);
+    const estrelasMin = parseFloat(document.getElementById("f-estrelas").value);
+    const soRuina = document.getElementById("f-ruina").checked;
+
+    let filtered = items.filter(p => {
+      if (concelho && p.Concelho !== concelho) return false;
+      if (!isNaN(precoMax) && parseFloat(p.Preco_EUR) > precoMax) return false;
+      if (estrelasMin && (parseFloat(p.Avaliacao_Global_estrelas)||0) < estrelasMin) return false;
+      if (soRuina && p.Ruina.toLowerCase().indexOf("sim") !== 0) return false;
+      return true;
+    });
+
+    filtered.sort((a,b) => {
+      let va = a[sortKey], vb = b[sortKey];
+      const na = parseFloat(va), nb = parseFloat(vb);
+      if (!isNaN(na) && !isNaN(nb)) return (na-nb)*sortDir;
+      return String(va).localeCompare(String(vb)) * sortDir;
+    });
+
+    const cols = [
+      {k:"Rank", l:"#"}, {k:"Localidade", l:"Localidade"}, {k:"Concelho", l:"Concelho"},
+      {k:"Area_m2", l:"Área (m²)"}, {k:"Preco_EUR", l:"Preço"}, {k:"EUR_por_m2", l:"€/m²"},
+      {k:"Situacao_Urbanistica", l:"Situação"}, {k:"Avaliacao_Global_estrelas", l:"Global ★"}
+    ];
+
+    let t = '<div id="table-scroll" style="overflow-x:auto;"><table style="width:100%;border-collapse:collapse;font-size:13px;min-width:640px;">';
+    t += '<thead><tr>';
+    cols.forEach(c => {
+      t += '<th data-key="'+c.k+'" style="text-align:left;padding:8px 6px;border-bottom:2px solid #ddd;cursor:pointer;white-space:nowrap;color:#333;">'+c.l+(sortKey===c.k?(sortDir===1?' ▲':' ▼'):'')+'</th>';
+    });
+    t += '<th style="padding:8px 6px;border-bottom:2px solid #ddd;">Link</th></tr></thead><tbody>';
+    filtered.forEach(p => {
+      t += '<tr style="border-bottom:1px solid #eee;">';
+      t += '<td style="padding:7px 6px;">'+p.Rank+'</td>';
+      t += '<td style="padding:7px 6px;">'+p.Localidade+'</td>';
+      t += '<td style="padding:7px 6px;">'+p.Concelho+'</td>';
+      t += '<td style="padding:7px 6px;">'+(!isNaN(parseFloat(p.Area_m2))?parseFloat(p.Area_m2).toLocaleString("pt-PT"):p.Area_m2)+'</td>';
+      t += '<td style="padding:7px 6px;">'+euros(p.Preco_EUR)+'</td>';
+      t += '<td style="padding:7px 6px;">'+(p.EUR_por_m2||"n/d")+'</td>';
+      t += '<td style="padding:7px 6px;max-width:180px;font-size:12px;color:#666;">'+p.Situacao_Urbanistica+'</td>';
+      t += '<td style="padding:7px 6px;color:#b8860b;">'+(p.Avaliacao_Global_estrelas||"n/d")+' ★</td>';
+      t += '<td style="padding:7px 6px;"><a href="'+p.Link+'" target="_blank" style="font-size:12px;">abrir ↗</a></td>';
+      t += '</tr>';
+    });
+    t += '</tbody></table></div>';
+    if (!filtered.length) t += '<div style="padding:20px;text-align:center;color:#888;font-size:13px;">Sem resultados para estes filtros.</div>';
+    document.getElementById("table-wrap").innerHTML = t;
+
+    document.querySelectorAll("#table-wrap th[data-key]").forEach(th => {
+      th.onclick = () => {
+        const k = th.getAttribute("data-key");
+        if (sortKey === k) sortDir *= -1; else { sortKey = k; sortDir = 1; }
+        renderTable();
+      };
+    });
+  }
+
+  document.getElementById("f-concelho").onchange = renderTable;
+  document.getElementById("f-preco").oninput = renderTable;
+  document.getElementById("f-estrelas").onchange = renderTable;
+  document.getElementById("f-ruina").onchange = renderTable;
+
+  renderTable();
+}
+
+async function init() {
+  if (CSV_URL.indexOf("COLAR_AQUI") === 0) {
+    document.getElementById("loading").innerHTML = "Este ficheiro ainda não tem o URL público da folha configurado. Falta o passo: Ficheiro > Partilhar > Publicar na Web > CSV, na Google Sheet, e colar o link na variável CSV_URL deste ficheiro.";
+    return;
+  }
+  try {
+    const res = await fetch(CSV_URL + (CSV_URL.indexOf("?")>-1?"&":"?") + "cachebust=" + Date.now());
+    if (!res.ok) throw new Error("HTTP " + res.status);
+    const csvText = await res.text();
+    const rows = parseCSV(csvText);
+    const items = toObjects(rows);
+    render(items);
+  } catch (e) {
+    document.getElementById("loading").innerHTML = "Não consegui carregar os dados da folha pública. Erro: " + (e && e.message ? e.message : e);
+  }
+}
+init();
+</script>
+</body>
+</html>
