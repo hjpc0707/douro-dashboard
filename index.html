@@ -302,6 +302,24 @@ function propRow(p) {
 
   const info = document.createElement("div");
   info.style.cssText = "flex:1;min-width:0;display:flex;flex-direction:column;justify-content:center;gap:4px;";
+  const coords = (p.Localizacao_Aprox && p.Localizacao_Aprox.indexOf(",") > -1) ? p.Localizacao_Aprox.trim() : null;
+  const mapsUrl = coords ? ("https://www.google.com/maps?q=" + coords) : null;
+  const fonteLoc = (p.Localizacao_Fonte || "").trim();
+  const fonteLabel = fonteLoc === "GPS_confirmado" ? "GPS confirmado" : (fonteLoc === "geocodificado" ? "localização aproximada" : "");
+
+  function distChip(label, km, min) {
+    if (!km) return "";
+    const minTxt = min ? Math.round(parseFloat(min)) + " min" : "";
+    return '<span style="display:inline-block;background:#f0f4f8;border-radius:6px;padding:2px 7px;font-size:11px;color:#455a70;white-space:nowrap;">'
+      + label + ' ' + parseFloat(km).toLocaleString("pt-PT") + ' km' + (minTxt ? ' · ' + minTxt : '') + '</span>';
+  }
+
+  const distHtml = [
+    distChip("✈️ Porto", p.Dist_Aeroporto_km, p.Tempo_Aeroporto_min),
+    distChip("Guimarães", p.Dist_Guimaraes_km, p.Tempo_Guimaraes_min),
+    distChip(p.Cidade_Proxima || "cidade próx.", p.Dist_CidadeProxima_km, p.Dist_CidadeProxima_min)
+  ].filter(Boolean).join(" ");
+
   info.innerHTML =
     '<div style="display:flex;justify-content:space-between;align-items:flex-start;gap:8px;flex-wrap:wrap;">'
       +'<div style="font-weight:600;font-size:15px;">'+p.Rank+'. '+p.Localidade+'</div>'
@@ -310,7 +328,9 @@ function propRow(p) {
     +'<div style="font-size:12px;color:#777;">'+p.Concelho+', '+p.Distrito
       +' · '+(p.Area_m2 && !isNaN(parseFloat(p.Area_m2)) ? parseFloat(p.Area_m2).toLocaleString("pt-PT")+" m²" : "área n/d")+'</div>'
     +'<div style="font-size:13px;color:#b8860b;">'+stars(p.Avaliacao_Global_estrelas)+' avaliação global</div>'
-    +'<div style="font-size:12px;color:#555;line-height:1.4;max-height:36px;overflow:hidden;">'+(p.Tipo_Vista||'')+'</div>';
+    +'<div style="font-size:12px;color:#555;line-height:1.4;max-height:36px;overflow:hidden;">'+(p.Tipo_Vista||'')+'</div>'
+    +(distHtml ? '<div style="display:flex;gap:5px;flex-wrap:wrap;margin-top:2px;">'+distHtml+'</div>' : '')
+    +(mapsUrl ? '<div style="margin-top:2px;"><a href="'+mapsUrl+'" target="_blank" rel="noopener" style="font-size:11px;color:#0b5fb0;" onclick="event.stopPropagation();">📍 ver no mapa'+(fonteLabel ? ' ('+fonteLabel+')' : '')+'</a></div>' : '');
   row.appendChild(info);
 
   return row;
@@ -410,11 +430,11 @@ function render(items) {
 
 async function init() {
   try {
-    const res = await fetch(CSV_URL + (CSV_URL.indexOf("?")>-1?"&":"?") + "cachebust=" + Date.now());
+    const res = await fetch(CSV_URL + (CSV_URL.indexOf("?")>-1?"&":"") + "cachebust=" + Date.now());
     if (!res.ok) throw new Error("HTTP " + res.status);
     const csvText = await res.text();
     const rows = parseCSV(csvText);
-    const items = toObjects(rows);
+    const items = toObjects(rows).filter(p => p.ID && p.ID.trim());
     render(items);
   } catch (e) {
     document.getElementById("loading").innerHTML = "Não consegui carregar os dados da folha pública. Erro: " + (e && e.message ? e.message : e);
